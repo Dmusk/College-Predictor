@@ -4,17 +4,35 @@ import { useState, useEffect } from 'react';
 import Layout from '../../components/Layout';
 import Button from '../../components/Button';
 
+// Define proper types for the college data
+interface CollegeDetails {
+  location?: string;
+  year?: string;
+  fees?: number;
+  placement_percentage?: number;
+  avg_package?: number;
+  highest_package?: number;
+}
+
+interface College {
+  college_name: string;
+  branch_name: string;
+  category: string;
+  percentile: string | number;
+  details?: CollegeDetails;
+}
+
 export default function PredictPage() {
   const [percentile, setPercentile] = useState('');
   const [collegeName, setCollegeName] = useState('');
   const [branchName, setBranchName] = useState('');
   const [category, setCategory] = useState('');
-  const [results, setResults] = useState([]);
-  const [colleges, setColleges] = useState([]);
-  const [branches, setBranches] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const [results, setResults] = useState<College[]>([]);
+  const [colleges, setColleges] = useState<string[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  const [selectedCollege, setSelectedCollege] = useState(null);
+  const [selectedCollege, setSelectedCollege] = useState<College | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [optionsError, setOptionsError] = useState('');
@@ -96,7 +114,7 @@ export default function PredictPage() {
     }
   };
 
-  const handleCollegeClick = (college) => {
+  const handleCollegeClick = (college: College) => {
     setSelectedCollege(college);
   };
 
@@ -197,13 +215,15 @@ export default function PredictPage() {
           )}
 
           <div className="mt-6 flex justify-center">
-            <Button
+            <button
               onClick={handlePredict}
               disabled={isLoading || optionsLoading}
-              className="px-8 py-3"
+              className={`bg-blue-500 hover:bg-blue-600 text-white font-bold px-8 py-3 rounded-lg shadow-md transition duration-300 ${
+                (isLoading || optionsLoading) ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
             >
               {isLoading ? 'Predicting...' : 'Predict Colleges'}
-            </Button>
+            </button>
           </div>
         </div>
 
@@ -351,7 +371,12 @@ export default function PredictPage() {
                 </div>
 
                 <div className="mt-6 text-center">
-                  <Button onClick={closeDetails}>Close</Button>
+                  <button 
+                    onClick={closeDetails} 
+                    className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
             </div>

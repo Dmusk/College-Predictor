@@ -1,6 +1,25 @@
 import { Client } from 'pg';
 
-export const saveToNeonDB = async (data: any[]) => {
+// Define types for the data structures
+interface CollegeData {
+  college_id: string;
+  college_name: string;
+  branch_id: string;
+  branch_name: string;
+  status: string;
+  category: string;
+  rank: number;
+  percentile: number;
+}
+
+interface MHTCETData {
+  percentile: number;
+  category: string;
+  college: string;
+  branch: string;
+}
+
+export const saveToNeonDB = async (data: CollegeData[]) => {
   const client = new Client({
     connectionString: process.env.NEONDB_URL,
   });
@@ -29,7 +48,11 @@ export const saveToNeonDB = async (data: any[]) => {
   }
 };
 
-export const saveDataToNeonDB = async (data) => {
+export const saveDataToNeonDB = async (data: MHTCETData) => {
+  const client = new Client({
+    connectionString: process.env.NEONDB_URL,
+  });
+  
   try {
     await client.connect();
     const query = 'INSERT INTO mhtcet_data (percentile, category, college, branch) VALUES ($1, $2, $3, $4)';
@@ -38,11 +61,15 @@ export const saveDataToNeonDB = async (data) => {
   } catch (error) {
     console.error('Error saving data to NeonDB:', error);
   } finally {
-    await client.disconnect();
+    await client.end();
   }
 };
 
-export const getCollegesByPercentile = async (percentile) => {
+export const getCollegesByPercentile = async (percentile: number) => {
+  const client = new Client({
+    connectionString: process.env.NEONDB_URL,
+  });
+  
   try {
     await client.connect();
     const query = 'SELECT * FROM mhtcet_data WHERE percentile BETWEEN $1 AND $2';
@@ -53,6 +80,6 @@ export const getCollegesByPercentile = async (percentile) => {
     console.error('Error retrieving colleges from NeonDB:', error);
     return [];
   } finally {
-    await client.disconnect();
+    await client.end();
   }
 };

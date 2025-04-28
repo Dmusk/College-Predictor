@@ -1,59 +1,90 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import formidable from 'formidable';
-import fs from 'fs';
-import csvParser from 'csv-parser'; // Import CSV parser
-import { saveToNeonDB } from '../../../utils/neondb';
+import { NextResponse } from "next/server";
+import { writeFile } from "fs/promises";
+import { join } from "path";
+import { mkdir } from "fs/promises";
+import csvParser from "csv-parser";
+import * as fs from "fs";
+import { saveToNeonDB } from "../../../utils/neondb";
 
-export const config = {
-  api: {
-    bodyParser: false, // Disable body parsing to handle file uploads
-  },
-};
+export async function POST(request: Request) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file") as File;
 
-const uploadHandler = async (req: NextApiRequest, res: NextApiResponse) => {
-  const form = new formidable.IncomingForm();
-
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error parsing the file' });
+    if (!file) {
+      return NextResponse.json({ error: "File is required" }, { status: 400 });
     }
 
-    const file = files.file[0]; // Access the uploaded file
+    // Create uploads directory if it doesn't exist
+    const uploadDir = join(process.cwd(), "uploads");
+    try {
+      await mkdir(uploadDir, { recursive: true });
+    } catch (error) {
+      console.error("Error creating directory:", error);
+    }
 
+    // Create a unique filename
+    const filePath = join(uploadDir, `${Date.now()}_${file.name}`);
+
+    // Convert the file to a Buffer and write it to the filesystem
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    await writeFile(filePath, buffer);
+
+    // Process the CSV file
     try {
       const csvData: any[] = [];
-      const fileStream = fs.createReadStream(file.filepath);
 
-      // Parse the CSV file
-      fileStream
-        .pipe(csvParser())
-        .on('data', (row) => {
-          csvData.push({
-            college_id: row['College ID'],
-            college_name: row['College Name'],
-            branch_id: row['Branch ID'],
-            branch_name: row['Branch Name'],
-            status: row['Status'],
-            category: row['Category'],
-            rank: parseInt(row['Rank'], 10),
-            percentile: parseFloat(row['Percentile']),
-          });
-        })
-        .on('end', async () => {
-          try {
-            // Save the extracted data to NeonDB
-            await saveToNeonDB(csvData);
-            res.status(200).json({ message: 'CSV data saved successfully' });
-          } catch (error) {
-            console.error('Error saving data to NeonDB:', error);
-            res.status(500).json({ error: 'Error saving data to database' });
-          }
-        });
+      // Set up the file stream and parser
+      const fileStream = fs.createReadStream(filePath);
+
+      // Return a promise that resolves when CSV processing is complete
+      const processCSV = new Promise<any[]>((resolve, reject) => {
+        fileStream
+          .pipe(csvParser())
+          .on("data", (row) => {
+            csvData.push({
+              college_id: row["College ID"],
+              college_name: row["College Name"],
+              branch_id: row["Branch ID"],
+              branch_name: row["Branch Name"],
+              status: row["Status"],
+              category: row["Category"],
+              rank: parseInt(row["Rank"], 10) || 0,
+              percentile: parseFloat(row["Percentile"]) || 0,
+            });
+          })
+          .on("end", () => resolve(csvData))
+          .on("error", reject);
+      });
+
+      // Wait for CSV processing to complete
+      const processedData = await processCSV;
+
+      // Save to database
+      await saveToNeonDB(processedData);
+
+      // Clean up the temporary file
+      fs.unlink(filePath, (err) => {
+        if (err) console.error("Error deleting temporary file:", err);
+      });
+
+      return NextResponse.json({
+        message: "CSV data processed and saved successfully",
+        count: processedData.length,
+      });
     } catch (error) {
-      console.error('Error processing the CSV file:', error);
-      res.status(500).json({ error: 'Error processing the CSV file' });
+      console.error("Error processing CSV:", error);
+      return NextResponse.json(
+        { error: "Error processing CSV file" },
+        { status: 500 }
+      );
     }
-  });
-};
-
-export default uploadHandler;
+  } catch (error) {
+    console.error("Upload error:", error);
+    return NextResponse.json(
+      { error: "Error uploading file" },
+      { status: 500 }
+    );
+  }
+}
