@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       WHERE percentile BETWEEN $1 AND $2
       ${college_name ? "AND college_name ILIKE $3" : ""}
       ${branch_name ? "AND branch_name ILIKE $4" : ""}
-      ${category ? "AND category = $5" : ""}
+      ${category ? "AND LOWER(category) = LOWER($5)" : ""}
       ORDER BY percentile DESC
     `;
 

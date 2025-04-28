@@ -7,11 +7,14 @@ export async function GET() {
   });
 
   try {
-    // Connect with timeout
+    // Connect with timeout - increased to 15 seconds for serverless database cold starts
     await Promise.race([
       client.connect(),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Database connection timeout")), 5000)
+        setTimeout(
+          () => reject(new Error("Database connection timeout")),
+          15000
+        )
       ),
     ]);
 
@@ -66,7 +69,8 @@ export async function GET() {
     console.error("Database connection error:", connError);
     return NextResponse.json(
       {
-        error: "Database connection failed",
+        error: "Database connection failed. Please try again later.",
+        message: connError.message,
         colleges: [],
         branches: [],
         categories: [],

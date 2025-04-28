@@ -32,13 +32,20 @@ export default function PredictPage() {
   const [branches, setBranches] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
+  const [suggestionMessage, setSuggestionMessage] = useState('');
+  const [appliedFilters, setAppliedFilters] = useState<{ [key: string]: string }>({});
   const [selectedCollege, setSelectedCollege] = useState<College | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [optionsError, setOptionsError] = useState('');
+  const [alternativeSuggestions, setAlternativeSuggestions] = useState<{
+    colleges?: string[];
+    branches?: string[];
+    categories?: string[];
+  }>({});
 
   useEffect(() => {
-    const fetchOptions = async () => {
+    const fetchOptions = async (retryCount = 0) => {
       setOptionsLoading(true);
       setOptionsError('');
 
@@ -46,29 +53,26 @@ export default function PredictPage() {
         const response = await fetch('/api/options');
 
         if (!response.ok) {
-          throw new Error(`API responded with status: ${response.status}`);
+          const errorData = await response.json().catch(() => ({}));
+          const errorMessage = errorData?.error || `API responded with status: ${response.status}`;
+          
+          // If we get a 500 error and have retries left, try again
+          if (response.status === 500 && retryCount < 2) {
+            console.log(`Database connection failed, retrying (${retryCount + 1}/3)...`);
+            setTimeout(() => fetchOptions(retryCount + 1), 3000); // Wait 3 seconds before retrying
+            return;
+          }
+          
+          throw new Error(errorMessage);
         }
 
-        const text = await response.text();
-
-        // Check if response is empty
-        if (!text) {
-          throw new Error('Empty response from API');
-        }
-
-        // Try to parse JSON
-        try {
-          const data = JSON.parse(text);
-          setColleges(data.colleges || []);
-          setBranches(data.branches || []);
-          setCategories(data.categories || []);
-        } catch (jsonError) {
-          console.error('JSON parsing error:', jsonError, 'Raw response:', text);
-          throw new Error('Invalid JSON response from API');
-        }
+        const data = await response.json();
+        setColleges(data.colleges || []);
+        setBranches(data.branches || []);
+        setCategories(data.categories || []);
       } catch (error) {
         console.error('Failed to fetch options:', error);
-        setOptionsError('Failed to load filter options. Please refresh the page.');
+        setOptionsError('Failed to load filter options. The database connection might be slow. Please wait a moment and refresh the page.');
       } finally {
         setOptionsLoading(false);
       }
@@ -85,18 +89,32 @@ export default function PredictPage() {
 
     setIsLoading(true);
     setErrorMessage('');
+    setSuggestionMessage('');
+    setAlternativeSuggestions({});
     setSelectedCollege(null);
+
+    // Track which filters are being applied
+    const filters = {
+      percentile,
+      college_name: collegeName,
+      branch_name: branchName,
+      category: category
+    };
+
+    // Create a record of applied non-empty filters for better error messaging
+    const activeFilters: { [key: string]: string } = {};
+    if (percentile) activeFilters.percentile = percentile;
+    if (collegeName) activeFilters.college = collegeName;
+    if (branchName) activeFilters.branch = branchName;
+    if (category) activeFilters.category = category;
+
+    setAppliedFilters(activeFilters);
 
     try {
       const response = await fetch('/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          percentile,
-          college_name: collegeName,
-          branch_name: branchName,
-          category: category
-        }),
+        body: JSON.stringify(filters),
       });
 
       const data = await response.json();
@@ -104,7 +122,9 @@ export default function PredictPage() {
         setResults(data.colleges);
       } else {
         setResults([]);
-        setErrorMessage('No colleges found for the given criteria.');
+
+        // Try to fetch alternative suggestions by removing specific filters
+        await fetchAlternativeSuggestions(filters);
       }
     } catch (error) {
       setErrorMessage('Failed to fetch predictions. Please try again.');
@@ -114,12 +134,130 @@ export default function PredictPage() {
     }
   };
 
+  const fetchAlternativeSuggestions = async (originalFilters: any) => {
+    try {
+      // If branch_name was specified, try without it
+      if (originalFilters.branch_name) {
+        const branchlessResponse = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...originalFilters,
+            branch_name: ''
+          }),
+        });
+
+        const branchlessData = await branchlessResponse.json();
+        if (branchlessData.colleges && branchlessData.colleges.length > 0) {
+          // Extract unique branches that do have results
+          const availableBranches: string[] = Array.from(
+            new Set(branchlessData.colleges.map((c: College) => c.branch_name))
+          );
+          setAlternativeSuggestions(prev => ({
+            ...prev,
+            branches: availableBranches.slice(0, 5)
+          }));
+        }
+      }
+
+      // If college_name was specified, try without it
+      if (originalFilters.college_name) {
+        const collegelessResponse = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...originalFilters,
+            college_name: ''
+          }),
+        });
+
+        const collegelessData = await collegelessResponse.json();
+        if (collegelessData.colleges && collegelessData.colleges.length > 0) {
+          // Extract unique colleges that do have results
+          const availableColleges: string[] = Array.from(
+            new Set(collegelessData.colleges.map((c: College) => c.college_name))
+          );
+          setAlternativeSuggestions(prev => ({
+            ...prev,
+            colleges: availableColleges.slice(0, 5)
+          }));
+        }
+      }
+
+      // If category was specified, try without it
+      if (originalFilters.category) {
+        const categorylessResponse = await fetch('/api/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...originalFilters,
+            category: ''
+          }),
+        });
+
+        const categorylessData = await categorylessResponse.json();
+        if (categorylessData.colleges && categorylessData.colleges.length > 0) {
+          // Extract unique categories that do have results
+          const availableCategories: string[] = Array.from(
+            new Set(categorylessData.colleges.map((c: College) => c.category))
+          );
+          setAlternativeSuggestions(prev => ({
+            ...prev,
+            categories: availableCategories.slice(0, 5)
+          }));
+        }
+      }
+
+      // Generate suggestion message based on what we found
+      generateSuggestionMessage();
+    } catch (error) {
+      console.error("Error fetching alternative suggestions:", error);
+    }
+  };
+
+  const generateSuggestionMessage = () => {
+    const filterList = Object.entries(appliedFilters)
+      .map(([key, value]) => `${key === 'percentile' ? value + '%' : value}`)
+      .join(", ");
+
+    setErrorMessage(`No colleges found for the specified filters: ${filterList}.`);
+
+    // Prepare suggestions based on the alternatives we found
+    const suggestions = [];
+
+    if (alternativeSuggestions.branches?.length) {
+      suggestions.push(`Try one of these branches instead: ${alternativeSuggestions.branches.join(", ")}.`);
+    }
+
+    if (alternativeSuggestions.colleges?.length) {
+      suggestions.push(`Available colleges for your percentile: ${alternativeSuggestions.colleges.join(", ")}.`);
+    }
+
+    if (alternativeSuggestions.categories?.length) {
+      suggestions.push(`Try these categories: ${alternativeSuggestions.categories.join(", ")}.`);
+    }
+
+    if (!suggestions.length && Object.keys(appliedFilters).length > 1) {
+      suggestions.push("Try removing some filters to see more results.");
+    }
+
+    if (suggestions.length > 0) {
+      setSuggestionMessage(suggestions.join(" "));
+    }
+  };
+
   const handleCollegeClick = (college: College) => {
     setSelectedCollege(college);
   };
 
   const closeDetails = () => {
     setSelectedCollege(null);
+  };
+
+  const clearFilters = () => {
+    setCollegeName('');
+    setBranchName('');
+    setCategory('');
   };
 
   return (
@@ -214,15 +352,23 @@ export default function PredictPage() {
             </div>
           )}
 
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex justify-center space-x-4">
             <button
               onClick={handlePredict}
               disabled={isLoading || optionsLoading}
-              className={`bg-blue-500 hover:bg-blue-600 text-white font-bold px-8 py-3 rounded-lg shadow-md transition duration-300 ${
-                (isLoading || optionsLoading) ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
+              className={`bg-blue-500 hover:bg-blue-600 text-white font-bold px-8 py-3 rounded-lg shadow-md transition duration-300 ${(isLoading || optionsLoading) ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
             >
               {isLoading ? 'Predicting...' : 'Predict Colleges'}
+            </button>
+
+            <button
+              onClick={clearFilters}
+              disabled={isLoading || optionsLoading || (!collegeName && !branchName && !category)}
+              className={`bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold px-6 py-3 rounded-lg shadow-md transition duration-300 ${(isLoading || optionsLoading || (!collegeName && !branchName && !category)) ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+            >
+              Clear Filters
             </button>
           </div>
         </div>
@@ -232,6 +378,13 @@ export default function PredictPage() {
           {errorMessage && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
               {errorMessage}
+            </div>
+          )}
+
+          {suggestionMessage && (
+            <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4 mt-2">
+              <p className="font-semibold">Suggestions:</p>
+              <p>{suggestionMessage}</p>
             </div>
           )}
 
@@ -371,8 +524,8 @@ export default function PredictPage() {
                 </div>
 
                 <div className="mt-6 text-center">
-                  <button 
-                    onClick={closeDetails} 
+                  <button
+                    onClick={closeDetails}
                     className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300"
                   >
                     Close
