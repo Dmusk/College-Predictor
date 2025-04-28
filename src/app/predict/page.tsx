@@ -55,14 +55,14 @@ export default function PredictPage() {
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           const errorMessage = errorData?.error || `API responded with status: ${response.status}`;
-          
+
           // If we get a 500 error and have retries left, try again
           if (response.status === 500 && retryCount < 2) {
             console.log(`Database connection failed, retrying (${retryCount + 1}/3)...`);
             setTimeout(() => fetchOptions(retryCount + 1), 3000); // Wait 3 seconds before retrying
             return;
           }
-          
+
           throw new Error(errorMessage);
         }
 

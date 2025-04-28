@@ -18,6 +18,9 @@ export default function Layout({ children }: LayoutProps) {
             <a href="/predict" className="text-white hover:underline mx-2">
               Predict
             </a>
+            <a href="/admin/login" className="text-white hover:underline mx-2">
+              Admin
+            </a>
           </nav>
         </div>
       </header>

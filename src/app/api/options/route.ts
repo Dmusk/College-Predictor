@@ -70,7 +70,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error: "Database connection failed. Please try again later.",
-        message: connError.message,
+        message: connError instanceof Error ? connError.message : String(connError),
         colleges: [],
         branches: [],
         categories: [],
