@@ -1,10 +1,16 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 interface FileUploadProps {
-    onFileSelected: (file: File) => void;
+    onFileSelected: (file: File) => Promise<{ fileId?: string }>;
     accept?: string;
     label?: string;
     disabled?: boolean;
+}
+
+interface ProgressState {
+    progress: number;
+    status: string;
+    error?: string;
 }
 
 export default function FileUpload({
@@ -14,7 +20,65 @@ export default function FileUpload({
     disabled = false,
 }: FileUploadProps) {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const [fileId, setFileId] = useState<string | null>(null);
+    const [progress, setProgress] = useState<ProgressState | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const eventSourceRef = useRef<EventSource | null>(null);
+
+    // Set up event source for progress updates
+    useEffect(() => {
+        if (fileId) {
+            // Close any existing connection
+            if (eventSourceRef.current) {
+                eventSourceRef.current.close();
+            }
+
+            // Create a new connection
+            const eventSource = new EventSource(`/api/admin/upload?fileId=${fileId}`);
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    setProgress(data);
+
+                    // If processing is complete or errored, close the connection
+                    if (data.progress === 100 || data.error) {
+                        setTimeout(() => {
+                            eventSource.close();
+                        }, 1000); // Give time to display final message
+
+                        // Reset the upload state after completion
+                        if (data.progress === 100) {
+                            setTimeout(() => {
+                                setIsUploading(false);
+                                setSelectedFile(null);
+                                if (fileInputRef.current) {
+                                    fileInputRef.current.value = '';
+                                }
+                            }, 3000); // Keep the success message visible for 3 seconds
+                        } else if (data.error) {
+                            setIsUploading(false);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error parsing progress event:", error);
+                }
+            };
+
+            eventSource.onerror = () => {
+                console.error("EventSource failed");
+                eventSource.close();
+            };
+
+            eventSourceRef.current = eventSource;
+
+            // Cleanup on unmount
+            return () => {
+                eventSource.close();
+            };
+        }
+    }, [fileId]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -23,10 +87,26 @@ export default function FileUpload({
         }
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (selectedFile) {
-            onFileSelected(selectedFile);
+            setIsUploading(true);
+            setProgress({ progress: 0, status: "Starting upload..." });
+
+            try {
+                const response = await onFileSelected(selectedFile);
+                if (response?.fileId) {
+                    setFileId(response.fileId);
+                }
+            } catch (error) {
+                console.error("Upload failed:", error);
+                setProgress({
+                    progress: 0,
+                    status: "Upload failed",
+                    error: error instanceof Error ? error.message : "Unknown error"
+                });
+                setIsUploading(false);
+            }
         }
     };
 
@@ -37,15 +117,24 @@ export default function FileUpload({
         }
     };
 
+    // Get color based on progress
+    const getProgressColor = () => {
+        if (!progress) return 'bg-blue-500';
+        if (progress.error) return 'bg-red-500';
+        if (progress.progress < 30) return 'bg-blue-500';
+        if (progress.progress < 70) return 'bg-blue-600';
+        return 'bg-green-500';
+    };
+
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center space-y-3 sm:space-y-0 sm:space-x-4">
                 <div className="flex-1">
                     <div
-                        onClick={!disabled ? handleClick : undefined}
-                        className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer ${disabled
+                        onClick={!disabled && !isUploading ? handleClick : undefined}
+                        className={`border-2 border-dashed rounded-lg p-4 text-center ${disabled || isUploading
                                 ? "bg-gray-100 border-gray-300 cursor-not-allowed"
-                                : "border-blue-300 hover:border-blue-500 bg-blue-50 hover:bg-blue-100"
+                                : "border-blue-300 hover:border-blue-500 bg-blue-50 hover:bg-blue-100 cursor-pointer"
                             }`}
                     >
                         <input
@@ -53,12 +142,12 @@ export default function FileUpload({
                             ref={fileInputRef}
                             onChange={handleFileChange}
                             accept={accept}
-                            disabled={disabled}
+                            disabled={disabled || isUploading}
                             className="hidden"
                         />
                         <div className="flex flex-col items-center justify-center py-3">
                             <svg
-                                className={`w-8 h-8 mb-2 ${disabled ? "text-gray-400" : "text-blue-500"
+                                className={`w-8 h-8 mb-2 ${disabled || isUploading ? "text-gray-400" : "text-blue-500"
                                     }`}
                                 fill="none"
                                 stroke="currentColor"
@@ -73,7 +162,7 @@ export default function FileUpload({
                                 />
                             </svg>
                             <p
-                                className={`text-sm ${disabled ? "text-gray-500" : "text-blue-600"
+                                className={`text-sm ${disabled || isUploading ? "text-gray-500" : "text-blue-600"
                                     }`}
                             >
                                 {selectedFile ? selectedFile.name : label}
@@ -89,8 +178,8 @@ export default function FileUpload({
 
                 <button
                     type="submit"
-                    disabled={!selectedFile || disabled}
-                    className={`px-4 py-2 rounded-md text-white ${!selectedFile || disabled
+                    disabled={!selectedFile || disabled || isUploading}
+                    className={`px-4 py-2 rounded-md text-white ${!selectedFile || disabled || isUploading
                             ? "bg-gray-300 cursor-not-allowed"
                             : "bg-blue-500 hover:bg-blue-600"
                         } transition duration-200 min-w-[120px]`}
@@ -98,6 +187,31 @@ export default function FileUpload({
                     Upload
                 </button>
             </div>
+
+            {/* Progress bar */}
+            {isUploading && progress && (
+                <div className="mt-4">
+                    <div className="mb-2 flex justify-between items-center">
+                        <div className="text-sm font-medium text-gray-700">{progress.status}</div>
+                        <div className="text-sm font-medium text-gray-700">
+                            {progress.progress}%
+                        </div>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        <div
+                            className={`h-2.5 rounded-full ${getProgressColor()}`}
+                            style={{ width: `${progress.progress}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
+
+            {/* Error message */}
+            {progress?.error && (
+                <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                    <p>{progress.error}</p>
+                </div>
+            )}
         </form>
     );
 }

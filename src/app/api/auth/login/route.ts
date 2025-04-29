@@ -21,13 +21,21 @@ export async function POST(request: Request) {
       );
     }
 
-    // Set auth cookie
-    setAuthCookie(user);
+    // Set auth cookie and get headers
+    const cookieHeaders = setAuthCookie(user);
 
-    return NextResponse.json({
+    // Create response with the cookie headers
+    const response = NextResponse.json({
       success: true,
       user: { username: user.username, role: user.role },
     });
+
+    // Apply the cookie headers to the response
+    cookieHeaders.forEach((value, key) => {
+      response.headers.set(key, value);
+    });
+
+    return response;
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getAuthCookie } from "../../../../utils/auth";
+import { requireAdmin } from "../../../../utils/auth";
 
 export async function GET() {
   try {
-    const user = getAuthCookie();
+    // Get the user from the auth cookie, this returns a promise
+    const user = await requireAdmin();
 
     if (!user) {
       return NextResponse.json({ authenticated: false });

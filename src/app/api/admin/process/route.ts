@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
 import path from "path";
 import { Client } from "pg";
-import { extractDataFromPDF, CollegeData } from "../../../../utils/geminiApi";
+import { processPdfFile, CollegeData } from "../../../../utils/pdfProcessor";
 import { requireAdmin } from "../../../../utils/auth";
 
 // Directory for temporary uploads
@@ -35,12 +35,12 @@ export async function POST(request: NextRequest) {
 
     const filePath = path.join(UPLOAD_DIR, pdfFile);
 
-    // Read the PDF file
-    const fileBuffer = await readFile(filePath);
-    const pdfBase64 = fileBuffer.toString("base64");
-
-    // Extract data from PDF using Gemini AI
-    const extractedData = await extractDataFromPDF(filePath, pdfBase64);
+    // Process the PDF file using our Python script based on the notebook
+    // Pass the fileId as the second parameter to track progress
+    const { data: extractedData, stats } = await processPdfFile(
+      filePath,
+      fileId
+    );
 
     if (!extractedData || extractedData.length === 0) {
       return NextResponse.json(
@@ -50,12 +50,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Save data to NeonDB
-    const stats = await saveDataToDatabase(extractedData);
+    const dbStats = await saveDataToDatabase(extractedData);
 
     return NextResponse.json({
       success: true,
       message: "PDF processed and data saved to database",
-      stats,
+      stats: dbStats,
     });
   } catch (error) {
     console.error("Error processing PDF:", error);
@@ -67,16 +67,6 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
-  }
-}
-
-// Helper to read directory contents
-async function readdir(dir: string): Promise<string[]> {
-  try {
-    return await (await import("fs/promises")).readdir(dir);
-  } catch (error) {
-    console.error(`Error reading directory ${dir}:`, error);
-    return [];
   }
 }
 
@@ -97,10 +87,14 @@ async function saveDataToDatabase(data: CollegeData[]): Promise<{
     await client.query(`
       CREATE TABLE IF NOT EXISTS cutoff_data (
         id SERIAL PRIMARY KEY,
+        college_id VARCHAR(50),
         college_name VARCHAR(255) NOT NULL,
+        branch_id VARCHAR(50),
         branch_name VARCHAR(255) NOT NULL,
+        status VARCHAR(100),
         category VARCHAR(50) NOT NULL,
-        percentile NUMERIC(5,2) NOT NULL,
+        rank VARCHAR(50),
+        percentile NUMERIC(10,7) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -110,14 +104,32 @@ async function saveDataToDatabase(data: CollegeData[]): Promise<{
 
     // Insert data into database
     for (const record of data) {
-      const { college_name, branch_name, category, percentile } = record;
+      const {
+        college_id,
+        college_name,
+        branch_id,
+        branch_name,
+        status,
+        category,
+        rank,
+        percentile,
+      } = record;
 
       try {
         await client.query(
-          `INSERT INTO cutoff_data (college_name, branch_name, category, percentile)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO cutoff_data (college_id, college_name, branch_id, branch_name, status, category, rank, percentile)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT DO NOTHING`, // Avoid duplicates
-          [college_name, branch_name, category, percentile]
+          [
+            college_id,
+            college_name,
+            branch_id,
+            branch_name,
+            status,
+            category,
+            rank,
+            percentile,
+          ]
         );
 
         addedRecords++;

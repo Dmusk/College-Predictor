@@ -1,5 +1,6 @@
 // Simple authentication utility for admin access
 import { cookies } from "next/headers";
+import { ResponseCookies } from "next/dist/compiled/@edge-runtime/cookies";
 import { encrypt, decrypt } from "./crypto";
 
 // In a production application, use a proper authentication system
@@ -32,23 +33,26 @@ export async function authenticateAdmin(
 }
 
 export function setAuthCookie(user: AdminUser) {
-  const cookieStore = cookies();
   const userData = JSON.stringify(user);
   const encryptedData = encrypt(userData, AUTH_SECRET_KEY);
 
-  cookieStore.set({
-    name: AUTH_COOKIE_NAME,
-    value: encryptedData,
+  // Use the Response API to set cookies instead
+  const response = new Response(null);
+  const responseCookies = new ResponseCookies(response.headers);
+  responseCookies.set(AUTH_COOKIE_NAME, encryptedData, {
     httpOnly: true,
     path: "/",
     secure: process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 24, // 1 day
     sameSite: "strict",
   });
+
+  // Return the headers that need to be set
+  return response.headers;
 }
 
-export function getAuthCookie(): AdminUser | null {
-  const cookieStore = cookies();
+export async function getAuthCookie(): Promise<AdminUser | null> {
+  const cookieStore = await cookies();
   const authCookie = cookieStore.get(AUTH_COOKIE_NAME);
 
   if (!authCookie) return null;
@@ -62,12 +66,21 @@ export function getAuthCookie(): AdminUser | null {
 }
 
 export function clearAuthCookie() {
-  const cookieStore = cookies();
-  cookieStore.delete(AUTH_COOKIE_NAME);
+  // Similar to setAuthCookie, return headers instead of directly modifying
+  const response = new Response(null);
+  const responseCookies = new ResponseCookies(response.headers);
+  responseCookies.set(AUTH_COOKIE_NAME, "", {
+    httpOnly: true,
+    path: "/",
+    expires: new Date(0), // Set to epoch time to expire immediately
+    maxAge: 0,
+  });
+
+  return response.headers;
 }
 
-export function requireAdmin() {
-  const user = getAuthCookie();
+export async function requireAdmin() {
+  const user = await getAuthCookie();
   if (!user || user.role !== "admin") {
     return null;
   }

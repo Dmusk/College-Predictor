@@ -6,18 +6,20 @@ import Layout from '../../../components/Layout';
 import FileUpload from '../../../components/FileUpload';
 
 interface UploadStats {
-  totalRecords: number;
-  addedRecords: number;
-  colleges: string[];
+  recordsExtracted: number;
+  recordsSaved: number;
+  colleges: number;
 }
 
 export default function AdminDashboard() {
   const [user, setUser] = useState<{ username: string, role: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadMessage, setUploadMessage] = useState('');
   const [uploadStats, setUploadStats] = useState<UploadStats | null>(null);
   const [showUploadSection, setShowUploadSection] = useState(false);
+  const [resetStatus, setResetStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [resetMessage, setResetMessage] = useState('');
   const router = useRouter();
 
   // Check authentication on page load
@@ -53,11 +55,11 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleFileUpload = async (file: File) => {
-    if (!file) return;
+  const handleFileUpload = async (file: File): Promise<{ fileId?: string }> => {
+    if (!file) return {};
 
     setUploadStatus('uploading');
-    setUploadMessage('Uploading PDF file...');
+    setUploadMessage('Uploading and processing PDF file. This may take a moment...');
     setUploadStats(null);
 
     // Create form data for file upload
@@ -65,7 +67,7 @@ export default function AdminDashboard() {
     formData.append('file', file);
 
     try {
-      // First upload the file
+      // Upload the file and process it in one step
       const uploadResponse = await fetch('/api/admin/upload', {
         method: 'POST',
         body: formData,
@@ -78,34 +80,64 @@ export default function AdminDashboard() {
 
       const uploadData = await uploadResponse.json();
 
-      // Now process the uploaded PDF
-      setUploadStatus('processing');
-      setUploadMessage('Processing PDF with Gemini AI...');
+      if (uploadData.success) {
+        // We no longer need to set uploadStatus here as the progress updates
+        // will be handled by the FileUpload component via server-sent events
 
-      const processResponse = await fetch('/api/admin/process', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileId: uploadData.fileId,
-        }),
-      });
-
-      if (!processResponse.ok) {
-        const errorData = await processResponse.json();
-        throw new Error(errorData.error || 'PDF processing failed');
+        // Return the fileId for progress tracking
+        return { fileId: uploadData.fileId };
+      } else {
+        throw new Error(uploadData.error || 'Unknown error occurred');
       }
-
-      const processData = await processResponse.json();
-
-      setUploadStatus('success');
-      setUploadMessage('PDF processed successfully! Data has been added to the database.');
-      setUploadStats(processData.stats);
     } catch (error) {
       console.error('Error during upload/process:', error);
       setUploadStatus('error');
       setUploadMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
+      throw error;
+    }
+  };
+
+  const handleResetData = async () => {
+    // Ask for confirmation first
+    const confirmReset = window.confirm(
+      'This will delete all college data from the database and clear output.json. This action cannot be undone. Are you sure?'
+    );
+
+    if (!confirmReset) return;
+
+    setResetStatus('loading');
+    setResetMessage('Resetting database and output.json...');
+
+    try {
+      const response = await fetch('/api/admin/reset', {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to reset data');
+      }
+
+      const result = await response.json();
+
+      setResetStatus('success');
+      setResetMessage('Database and output.json have been cleared successfully!');
+
+      // Reset after 3 seconds
+      setTimeout(() => {
+        setResetStatus('idle');
+        setResetMessage('');
+      }, 3000);
+    } catch (error) {
+      console.error('Error resetting data:', error);
+      setResetStatus('error');
+      setResetMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`);
+
+      // Reset error after 5 seconds
+      setTimeout(() => {
+        setResetStatus('idle');
+        setResetMessage('');
+      }, 5000);
     }
   };
 
@@ -174,17 +206,40 @@ export default function AdminDashboard() {
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200 flex flex-col items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-purple-500 mb-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-red-500 mb-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
-              <h3 className="text-lg font-medium text-gray-800 mb-2">Manage Data</h3>
-              <p className="text-gray-600 text-center mb-4">Delete or modify specific college data entries</p>
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Reset Data</h3>
+              <p className="text-gray-600 text-center mb-4">Clear database and output.json file to start fresh</p>
               <button
-                onClick={() => router.push('/admin/manage')}
-                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-md text-sm font-medium transition duration-200"
+                onClick={handleResetData}
+                disabled={resetStatus === 'loading'}
+                className={`${resetStatus === 'loading'
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-red-500 hover:bg-red-600'
+                  } text-white px-4 py-2 rounded-md text-sm font-medium transition duration-200`}
               >
-                Manage Data
+                {resetStatus === 'loading' ? (
+                  <span className="flex items-center">
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Resetting...
+                  </span>
+                ) : (
+                  'Reset All Data'
+                )}
               </button>
+
+              {/* Reset Status Messages */}
+              {resetStatus === 'success' && (
+                <div className="mt-2 text-sm font-medium text-green-600">{resetMessage}</div>
+              )}
+
+              {resetStatus === 'error' && (
+                <div className="mt-2 text-sm font-medium text-red-600">{resetMessage}</div>
+              )}
             </div>
           </div>
 
@@ -194,59 +249,19 @@ export default function AdminDashboard() {
               <h2 className="text-xl font-semibold mb-4 text-gray-700">Upload College Data</h2>
               <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
                 <p className="mb-4 text-gray-600">
-                  Upload a PDF file containing college cutoff data. The system will use Gemini AI to extract
-                  the information and store it in the database.
+                  Upload a PDF file containing college cutoff data. The system will automatically extract
+                  the information, save it to output.json, and store it in the database.
                 </p>
 
                 <FileUpload
                   onFileSelected={handleFileUpload}
                   accept=".pdf"
                   label="Select PDF file"
-                  disabled={uploadStatus === 'uploading' || uploadStatus === 'processing'}
+                  disabled={false}
                 />
-
-                {uploadStatus !== 'idle' && (
-                  <div className="mt-6">
-                    {uploadStatus === 'uploading' || uploadStatus === 'processing' ? (
-                      <div className="flex items-center">
-                        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500 mr-3"></div>
-                        <p className="text-blue-600">{uploadMessage}</p>
-                      </div>
-                    ) : uploadStatus === 'success' ? (
-                      <div className="bg-green-100 text-green-700 p-4 rounded-md">
-                        <p className="font-medium">{uploadMessage}</p>
-                        {uploadStats && (
-                          <div className="mt-3">
-                            <p>Total records processed: {uploadStats.totalRecords}</p>
-                            <p>Records added to database: {uploadStats.addedRecords}</p>
-                            {uploadStats.colleges.length > 0 && (
-                              <div className="mt-2">
-                                <p className="font-medium">Colleges included:</p>
-                                <ul className="list-disc list-inside mt-1">
-                                  {uploadStats.colleges.slice(0, 5).map((college, idx) => (
-                                    <li key={idx}>{college}</li>
-                                  ))}
-                                  {uploadStats.colleges.length > 5 && (
-                                    <li>...and {uploadStats.colleges.length - 5} more</li>
-                                  )}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="bg-red-100 text-red-700 p-4 rounded-md">
-                        <p>{uploadMessage}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           )}
-
-          {/* Data Management Section - Simplified and moved to cards above */}
         </div>
       </div>
     </Layout>
